@@ -211,24 +211,123 @@ def parse_triage(text):
     return result
 
 # ============================================================================
-# BOOKING
+# AGENTIC BOOKING — reads real schedule from agentic_triage_schedules.xlsx
 # ============================================================================
-DOCTORS = {'Emergency':'Dr. Khalil','Internal Medicine':'Dr. Ahmed','Family Medicine':'Dr. Noor','Cardiology':'Dr. Hasan','Neurology':'Dr. Lina'}
+@st.cache_resource
+def load_schedules():
+    import pandas as pd
+    path = Path(__file__).parent / "agentic_triage_schedules.xlsx"
+    if not path.exists():
+        return None, None
+    emergency = pd.read_excel(path, sheet_name='Emergency Schedule')
+    routine = pd.read_excel(path, sheet_name='Routine Schedule')
+    return emergency, routine
 
-def infer_dept(s):
-    sl = s.lower()
-    if any(k in sl for k in ['chest','heart','cardiac']): return 'Cardiology'
-    if any(k in sl for k in ['head','brain','stroke','vision','speech']): return 'Neurology'
-    return 'Internal Medicine'
+EMERGENCY_DF, ROUTINE_DF = load_schedules()
+SCHEDULE_AVAILABLE = EMERGENCY_DF is not None
 
-def book_action(cid, tier, symptoms=''):
-    dept = infer_dept(symptoms); doc = DOCTORS.get(dept,'Dr. Ahmed')
+# Track booked slots in session state (persists during app session)
+if 'booked_slots' not in st.session_state:
+    st.session_state.booked_slots = set()
+
+def find_available_slot(schedule_df, schedule_type):
+    """Find the next available slot that hasn't been booked this session."""
+    if schedule_df is None:
+        return None
+    available = schedule_df[
+        (schedule_df['Available'] == 'Available') &
+        (~schedule_df['Slot ID'].isin(st.session_state.booked_slots))
+    ]
+    if available.empty:
+        return None
+    # Take the first available slot (sorted by date + time)
+    slot = available.iloc[0]
+    return slot
+
+def book_slot(slot_id):
+    """Mark a slot as booked for this session."""
+    st.session_state.booked_slots.add(slot_id)
+
+def book_action(case_id, tier, symptoms=''):
     if tier == 'Urgent':
-        return {'status':'urgent_referral','type':'Immediate ER Admission','doctor':f'{doc} ({dept}) — On Duty','time':'IMMEDIATELY — No appointment needed','dept':dept,'room':f'ER-{random.randint(1,15)}','booking_id':f'UR-{uuid.uuid4().hex[:6]}','instructions':'Please proceed to the Emergency Room immediately. The on-duty doctor will see you without an appointment. A nurse will meet you at triage.'}
-    elif tier == 'Routine':
-        return {'status':'booked','type':'Scheduled Appointment','doctor':f'{doc} ({dept})','time':(datetime.now()+timedelta(days=random.randint(2,10))).strftime('%B %d, %Y at %I:%M %p'),'dept':dept,'room':f'Clinic-{random.randint(100,350)}','booking_id':f'BK-{uuid.uuid4().hex[:6]}','instructions':'Please arrive 15 minutes early. Bring ID and insurance.'}
-    return {'status':'self_care_issued','type':'Self-Care Guidance','doctor':None,'time':None,'dept':None,'room':None,'booking_id':f'SC-{uuid.uuid4().hex[:6]}','instructions':'Manage at home. Return if symptoms worsen.','guidance':'- Rest and hydrate\n- Monitor symptoms\n- OTC medication as needed\n- Return if worsening'}
+        if SCHEDULE_AVAILABLE:
+            slot = find_available_slot(EMERGENCY_DF, 'emergency')
+            if slot is not None:
+                book_slot(slot['Slot ID'])
+                return {
+                    'status': 'urgent_referral',
+                    'type': 'Immediate ER Admission',
+                    'doctor': f"{slot['Doctor']} — On Duty",
+                    'time': 'IMMEDIATELY — No appointment needed',
+                    'dept': 'Emergency',
+                    'room': slot['Room'],
+                    'booking_id': slot['Slot ID'],
+                    'instructions': (
+                        f"Please proceed to {slot['Room']} in the Emergency Room immediately. "
+                        f"{slot['Doctor']} is on duty and will see you without an appointment."
+                    ),
+                }
+            return {
+                'status': 'urgent_referral', 'type': 'Immediate ER Admission',
+                'doctor': 'Next available ER doctor', 'time': 'IMMEDIATELY',
+                'dept': 'Emergency', 'room': 'ER Triage',
+                'booking_id': f'UR-{uuid.uuid4().hex[:6]}',
+                'instructions': 'All ER rooms are currently occupied. Please proceed to ER Triage for immediate assessment.',
+            }
+        # Fallback if no schedule file
+        return {
+            'status': 'urgent_referral', 'type': 'Immediate ER Admission',
+            'doctor': 'On-duty ER physician',
+            'time': 'IMMEDIATELY — No appointment needed',
+            'dept': 'Emergency', 'room': f'ER-{random.randint(1,3)}',
+            'booking_id': f'UR-{uuid.uuid4().hex[:6]}',
+            'instructions': 'Please proceed to the Emergency Room immediately.',
+        }
 
+    elif tier == 'Routine':
+        if SCHEDULE_AVAILABLE:
+            slot = find_available_slot(ROUTINE_DF, 'routine')
+            if slot is not None:
+                book_slot(slot['Slot ID'])
+                return {
+                    'status': 'booked',
+                    'type': 'Scheduled Appointment',
+                    'doctor': slot['Doctor'],
+                    'time': f"{slot['Date']} ({slot['Day']}) at {slot['Time']}",
+                    'dept': slot['Department'],
+                    'room': slot['Room'],
+                    'booking_id': slot['Slot ID'],
+                    'instructions': (
+                        f"Your appointment is confirmed with {slot['Doctor']} "
+                        f"on {slot['Date']} ({slot['Day']}) at {slot['Time']} "
+                        f"in room {slot['Room']}. Please arrive 15 minutes early."
+                    ),
+                }
+            return {
+                'status': 'failed', 'type': 'No Slots Available',
+                'doctor': None, 'time': None, 'dept': 'General',
+                'room': None, 'booking_id': None,
+                'instructions': 'No routine appointment slots are currently available. Please call the clinic to be added to the waitlist.',
+            }
+        # Fallback
+        d = random.randint(2, 10)
+        return {
+            'status': 'booked', 'type': 'Scheduled Appointment',
+            'doctor': 'Dr. Hall (General)', 'dept': 'General',
+            'time': (datetime.now() + timedelta(days=d)).strftime('%B %d, %Y at %I:%M %p'),
+            'room': f'G-{random.randint(101,104)}',
+            'booking_id': f'BK-{uuid.uuid4().hex[:6]}',
+            'instructions': 'Please arrive 15 minutes early. Bring ID and insurance.',
+        }
+
+    else:  # Self-care
+        return {
+            'status': 'self_care_issued', 'type': 'Self-Care Guidance',
+            'doctor': None, 'time': None, 'dept': None, 'room': None,
+            'booking_id': f'SC-{uuid.uuid4().hex[:6]}',
+            'instructions': 'You can manage your symptoms at home. Return to the ER or see your doctor if symptoms worsen.',
+            'guidance': '- Get plenty of rest\n- Stay hydrated\n- Monitor your symptoms\n- Take over-the-counter medication as needed\n- Return if symptoms worsen or new symptoms develop',
+        }
 # ============================================================================
 # APP
 # ============================================================================
