@@ -224,7 +224,7 @@ def infer_dept(s):
 def book_action(cid, tier, symptoms=''):
     dept = infer_dept(symptoms); doc = DOCTORS.get(dept,'Dr. Ahmed')
     if tier == 'Urgent':
-        return {'status':'urgent_referral','type':'Urgent Referral','doctor':f'{doc} ({dept})','time':(datetime.now()+timedelta(hours=1)).strftime('%B %d, %Y at %I:%M %p'),'dept':dept,'room':f'ER-{random.randint(1,15)}','booking_id':f'UR-{uuid.uuid4().hex[:6]}','instructions':'Please proceed to the Emergency Room immediately.'}
+        return {'status':'urgent_referral','type':'Immediate ER Admission','doctor':f'{doc} ({dept}) — On Duty','time':'IMMEDIATELY — No appointment needed','dept':dept,'room':f'ER-{random.randint(1,15)}','booking_id':f'UR-{uuid.uuid4().hex[:6]}','instructions':'Please proceed to the Emergency Room immediately. The on-duty doctor will see you without an appointment. A nurse will meet you at triage.'}
     elif tier == 'Routine':
         return {'status':'booked','type':'Scheduled Appointment','doctor':f'{doc} ({dept})','time':(datetime.now()+timedelta(days=random.randint(2,10))).strftime('%B %d, %Y at %I:%M %p'),'dept':dept,'room':f'Clinic-{random.randint(100,350)}','booking_id':f'BK-{uuid.uuid4().hex[:6]}','instructions':'Please arrive 15 minutes early. Bring ID and insurance.'}
     return {'status':'self_care_issued','type':'Self-Care Guidance','doctor':None,'time':None,'dept':None,'room':None,'booking_id':f'SC-{uuid.uuid4().hex[:6]}','instructions':'Manage at home. Return if symptoms worsen.','guidance':'- Rest and hydrate\n- Monitor symptoms\n- OTC medication as needed\n- Return if worsening'}
@@ -284,7 +284,6 @@ if page == "Patient Dashboard":
                     if c.get('llm_patient_explanation'): st.markdown("---"); st.markdown("#### What This Means For You"); st.markdown(c['llm_patient_explanation'])
                     if c.get('nurse_notes') and c['nurse_notes'].strip(): st.markdown("---"); st.markdown("#### Nurse Notes"); st.markdown(f"> {c['nurse_notes']}")
                     if c.get('nurse_override_reason') and c['nurse_override_reason'].strip(): st.markdown(f"**Nurse comment:** {c['nurse_override_reason']}")
-                    if c.get('llm_recommendation'): st.markdown("---"); st.markdown("#### Recommendation"); st.markdown(c['llm_recommendation'])
                     if c.get('llm_next_steps'): st.markdown("#### Next Steps"); st.markdown(c['llm_next_steps'])
                     st.markdown("---"); st.markdown("#### Timeline")
                     if c.get('created_at'): st.markdown(f"- **Submitted:** {c['created_at'][:19].replace('T',' ')}")
