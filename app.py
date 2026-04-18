@@ -340,9 +340,19 @@ stats = db_stats()
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Cases:** {stats['total']} total | {stats['pending']} pending")
 st.sidebar.markdown(f"**RAG:** {'Connected (' + str(len(KB_CHUNKS)) + ' chunks)' if RAG_AVAILABLE else 'Demo mode — upload chunked_docs_phase2.json'}")
+st.sidebar.markdown(f"**Scheduler:** {'Connected' if SCHEDULE_AVAILABLE else 'Demo mode'}")
+if SCHEDULE_AVAILABLE:
+    st.sidebar.markdown(f"**Booked this session:** {len(st.session_state.booked_slots)}")
+st.sidebar.markdown("---")
+with st.sidebar.expander("Admin"):
+    if st.button("Reset Database", type="secondary"):
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("DELETE FROM cases")
+        conn.commit(); conn.close()
+        st.session_state.booked_slots = set()
+        st.rerun()
 
-if page == "Patient Dashboard":
-    st.title("Patient Triage Dashboard")
+if page == "Patient Dashboard":    st.title("Patient Triage Dashboard")
     tab1, tab2 = st.tabs(["Submit New Case","Check Results"])
     with tab1:
         with st.form("pf"):
@@ -383,7 +393,6 @@ if page == "Patient Dashboard":
                     if c.get('llm_patient_explanation'): st.markdown("---"); st.markdown("#### What This Means For You"); st.markdown(c['llm_patient_explanation'])
                     if c.get('nurse_notes') and c['nurse_notes'].strip(): st.markdown("---"); st.markdown("#### Nurse Notes"); st.markdown(f"> {c['nurse_notes']}")
                     if c.get('nurse_override_reason') and c['nurse_override_reason'].strip(): st.markdown(f"**Nurse comment:** {c['nurse_override_reason']}")
-                    if c.get('llm_next_steps'): st.markdown("#### Next Steps"); st.markdown(c['llm_next_steps'])
                     st.markdown("---"); st.markdown("#### Timeline")
                     if c.get('created_at'): st.markdown(f"- **Submitted:** {c['created_at'][:19].replace('T',' ')}")
                     act = c.get('nurse_action',''); lbl = {'approve':'Approved','override_upgrade':'Upgraded','override_downgrade':'Adjusted'}.get(act,act)
