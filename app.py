@@ -352,7 +352,8 @@ with st.sidebar.expander("Admin"):
         st.session_state.booked_slots = set()
         st.rerun()
 
-if page == "Patient Dashboard":    st.title("Patient Triage Dashboard")
+if page == "Patient Dashboard":
+    st.title("Patient Triage Dashboard")
     tab1, tab2 = st.tabs(["Submit New Case","Check Results"])
     with tab1:
         with st.form("pf"):
