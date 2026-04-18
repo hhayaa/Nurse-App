@@ -1,3 +1,4 @@
 streamlit>=1.30
 google-genai
 rank-bm25
+openpyxl
