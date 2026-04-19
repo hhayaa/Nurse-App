@@ -60,6 +60,39 @@ def db_stats():
 
 init_db()
 
+
+# ============================================================================
+# NURSE AUTHENTICATION
+# ============================================================================
+NURSES = {
+    'haya':  {'password': '123',  'name': 'Haya'},   
+    'malek': {'password': '123', 'name': 'Malek'},
+    'yomna': {'password': '123', 'name': 'Yomna'},
+    'admin':       {'password': 'admin2026', 'name': 'Administrator'},
+}
+
+def check_nurse_login():
+    """Returns nurse name if logged in, None otherwise."""
+    return st.session_state.get('nurse_name', None)
+
+def nurse_login_form():
+    """Show login form. Returns True if just logged in."""
+    st.title("Nurse Login")
+    st.markdown("Please enter your credentials to access the triage review dashboard.")
+    with st.form("nurse_login"):
+        username = st.text_input("Username", placeholder="e.g. nurse_yomna")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
+    if submitted:
+        if username in NURSES and NURSES[username]['password'] == password:
+            st.session_state.nurse_name = NURSES[username]['name']
+            st.session_state.nurse_username = username
+            st.rerun()
+        else:
+            st.error("Invalid username or password.")
+    return False
+
+
 # ============================================================================
 # RAG KNOWLEDGE BASE — your actual medical documents from the notebook
 # ============================================================================
@@ -402,7 +435,17 @@ if page == "Patient Dashboard":
                 else: st.info(f"**{c['case_id']}** — Processing...")
 
 elif page == "Nurse Dashboard":
-    st.title("Nurse Triage Review Dashboard")
+    nurse = check_nurse_login()
+    if not nurse:
+        nurse_login_form()
+    else:
+        st.title("Nurse Triage Review Dashboard")
+        st.markdown(f"Logged in as: **{nurse}**")
+        if st.sidebar.button("Logout"):
+            del st.session_state['nurse_name']
+            del st.session_state['nurse_username']
+            st.rerun()
+    
     pending = db_get_all(status='pending'); reviewed = db_get_all(status='reviewed')
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("Pending",len(pending)); c2.metric("Reviewed",len(reviewed))
@@ -467,7 +510,7 @@ elif page == "Nurse Dashboard":
                         elif tiers.index(nurse_tier)<tiers.index(tier): act = 'override_upgrade'
                         else: act = 'override_downgrade'
                         bk = book_action(case['case_id'],nurse_tier,case.get('patient_symptoms',''))
-                        db_update(case['case_id'],{'nurse_tier':nurse_tier,'nurse_action':act,'nurse_notes':notes,'nurse_override_reason':ov_reason,'nurse_timestamp':datetime.utcnow().isoformat(),'nurse_clarity':clarity,'nurse_usefulness':useful,'nurse_trust':trust,'nurse_safety':safety,'final_tier':nurse_tier,'booking_status':bk['status'],'booking_details':json.dumps(bk),'status':'reviewed'})
+                        db_update(case['case_id'],{'nurse_tier':nurse_tier,'nurse_action':act,'nurse_notes':notes,'nurse_name': nurse,'nurse_override_reason':ov_reason,'nurse_timestamp':datetime.utcnow().isoformat(),'nurse_clarity':clarity,'nurse_usefulness':useful,'nurse_trust':trust,'nurse_safety':safety,'final_tier':nurse_tier,'booking_status':bk['status'],'booking_details':json.dumps(bk),'status':'reviewed'})
                         st.success(f"Recorded: **{nurse_tier}** ({act})"); st.balloons(); st.rerun()
     with tab_h:
         if not reviewed: st.info("No reviewed cases yet.")
