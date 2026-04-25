@@ -10,6 +10,7 @@ DB_PATH = "triage_hil.db"
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
+    conn.execute("DROP TABLE IF EXISTS cases")
     conn.execute("""CREATE TABLE IF NOT EXISTS cases (
         case_id TEXT PRIMARY KEY, ticket_number TEXT, patient_symptoms TEXT,
         enriched_symptoms TEXT,
