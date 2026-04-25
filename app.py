@@ -305,6 +305,21 @@ def find_slot(df):
     avail = df[(df['Available']=='Available')&(~df['Slot ID'].isin(st.session_state.booked_slots))]
     return avail.iloc[0] if not avail.empty else None
 
+def make_future_date(slot_date, slot_day, slot_time):
+    """Convert static schedule dates to future dates relative to today."""
+    today = datetime.now()
+    try:
+        orig = datetime.strptime(str(slot_date)[:10], '%Y-%m-%d')
+        if orig < today:
+            # Shift to next occurrence of the same weekday
+            days_ahead = today.toordinal() - orig.toordinal()
+            weeks = (days_ahead // 7) + 1
+            new_date = orig + timedelta(weeks=weeks)
+            return f"{new_date.strftime('%B %d, %Y')} ({slot_day}) at {slot_time}"
+    except:
+        pass
+    return f"{slot_date} ({slot_day}) at {slot_time}"
+
 def book_action(cid, tier, symptoms=''):
     if tier == 'Urgent':
         if SCHEDULE_AVAILABLE:
@@ -318,7 +333,7 @@ def book_action(cid, tier, symptoms=''):
             slot = find_slot(ROUTINE_DF)
             if slot is not None:
                 st.session_state.booked_slots.add(slot['Slot ID'])
-                return {'status':'booked','type':'Scheduled Appointment','doctor':slot['Doctor'],'time':f"{slot['Date']} ({slot['Day']}) at {slot['Time']}",'dept':slot['Department'],'room':slot['Room'],'booking_id':slot['Slot ID'],'agent_decision':'routine_appointment','instructions':f"Appointment with {slot['Doctor']} on {slot['Date']} at {slot['Time']} in {slot['Room']}. Arrive 15 min early."}
+                return {'status':'booked','type':'Scheduled Appointment','doctor':slot['Doctor'],'time': make_future_date(slot['Date'], slot['Day'], slot['Time']),'dept':slot['Department'],'room':slot['Room'],'booking_id':slot['Slot ID'],'agent_decision':'routine_appointment','instructions':f"Appointment with {slot['Doctor']} on {make_future_date(slot['Date'], slot['Day'], slot['Time'])} in {slot['Room']}. Arrive 15 min early."}
         return {'status':'booked','type':'Scheduled Appointment','doctor':'Dr. Ahmed','dept':'General','time':(datetime.now()+timedelta(days=3)).strftime('%B %d at %I:%M %p'),'room':'G-101','booking_id':f'BK-{uuid.uuid4().hex[:6]}','agent_decision':'routine_fallback','instructions':'Arrive 15 minutes early.'}
     return {'status':'self_care_issued','type':'Self-Care Guidance','doctor':None,'time':None,'dept':None,'room':None,'booking_id':f'SC-{uuid.uuid4().hex[:6]}','agent_decision':'self_care','instructions':'Manage at home. Return if worsening.','guidance':'- Rest and hydrate\n- Monitor symptoms\n- OTC medication as needed\n- Return if fever > 38.5C or worsening'}
 
