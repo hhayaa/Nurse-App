@@ -66,10 +66,10 @@ def db_stats():
 init_db()
 
 NURSES = {
-    'nurse_yomna': {'password': 'yomna123', 'name': 'Nurse Yomna'},
-    'nurse_malek': {'password': 'malek123', 'name': 'Nurse Malek'},
-    'nurse_haya':  {'password': 'haya123',  'name': 'Nurse Haya'},
-    'admin':       {'password': 'admin2026', 'name': 'Administrator'},
+    'yomna': {'password': '123', 'name': 'Nurse Yomna'},
+    'malek': {'password': '123', 'name': 'Nurse Malek'},
+    'haya':  {'password': '123',  'name': 'Nurse Haya'},
+    'admin':   {'password': 'admin2026', 'name': 'Administrator'},
 }
 
 def check_nurse_login():
@@ -79,7 +79,7 @@ def nurse_login_form():
     st.title("Nurse Login")
     st.markdown("Please enter your credentials to access the triage review dashboard.")
     with st.form("nurse_login"):
-        username = st.text_input("Username", placeholder="e.g. nurse_haya")
+        username = st.text_input("Username", placeholder="e.g. nurse_name")
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
     if submitted:
