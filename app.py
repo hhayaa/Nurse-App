@@ -185,7 +185,6 @@ Respond ONLY in JSON:
 {{"ready": true, "questions": []}}
 or
 {{"ready": false, "questions": ["question 1", "question 2"]}}'''
-
     try:
         raw = gemini_call(prompt, max_tokens=300)
         clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
