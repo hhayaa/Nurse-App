@@ -120,12 +120,12 @@ def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
     return resp.text or ''
 
 # ============================================================================
-# AGENTIC AI 1: PROMPT CHAINING — multi-round adaptive symptom gathering
+# AGENTIC AI 1: PROMPT CHAINING -- multi-round adaptive symptom gathering
 #
 # How it works (chain pattern):
-#   Prompt 1: Patient symptoms → LLM decides if enough info → generates questions
-#   Prompt 2: Patient symptoms + Round 1 Q&A → LLM re-assesses → generates NEW questions
-#   Prompt 3: Patient symptoms + Round 1 + Round 2 Q&A → LLM re-assesses → ready or force
+#   Prompt 1: Patient symptoms -> LLM decides if enough info -> generates questions
+#   Prompt 2: Patient symptoms + Round 1 Q&A -> LLM re-assesses -> generates NEW questions
+#   Prompt 3: Patient symptoms + Round 1 + Round 2 Q&A -> LLM re-assesses -> ready or force
 #
 # Each prompt's OUTPUT (the Q&A) becomes the INPUT context for the NEXT prompt.
 # This is prompt chaining: sequential prompts where each builds on the previous.
@@ -138,26 +138,24 @@ MAX_CHAIN_ROUNDS = 3
 def prompt_chain_assess(symptoms, previous_qa=None):
     """
     Prompt Chaining (Agentic AI 1): Each call builds on previous Q&A context.
-    
-    Round 1: LLM sees only raw symptoms → asks initial questions
-    Round 2: LLM sees symptoms + Round 1 answers → asks DIFFERENT questions
-    Round 3: LLM sees symptoms + all answers → marks ready or final questions
-    
+
+    Round 1: LLM sees only raw symptoms -> asks initial questions
+    Round 2: LLM sees symptoms + Round 1 answers -> asks DIFFERENT questions
+    Round 3: LLM sees symptoms + all answers -> marks ready or final questions
+
     This is NOT a router (which would dispatch to different paths).
     This IS prompt chaining (output of prompt N feeds into prompt N+1).
     """
     if not GEMINI_OK:
         return {"ready": True, "questions": []}
 
-    # Build the chain context: each round adds to the history
     chain_context = ""
     if previous_qa and len(previous_qa) > 0:
         chain_context = "\n\nPrevious information gathered through follow-up (prompt chain history):\n"
         chain_context += "\n".join(f"Q: {q}\nA: {a}" for q, a in previous_qa)
-         chain_context += f"\n\n(Total rounds completed: {len(previous_qa)})"
+        chain_context += f"\n\n(Total rounds completed: {len(previous_qa)})"
 
-
-  prompt = f'''You are an experienced ER intake nurse. Your job is to decide if a patient gave enough info to triage.
+    prompt = f'''You are an experienced ER intake nurse. Your job is to decide if a patient gave enough info to triage.
 
 Patient said: "{symptoms}"{chain_context}
 
@@ -189,7 +187,6 @@ or
 
     try:
         raw = gemini_call(prompt, max_tokens=300)
-
         clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
         r = json.loads(clean)
         return {"ready": r.get("ready", True), "questions": r.get("questions", [])}
