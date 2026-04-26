@@ -94,7 +94,7 @@ def nurse_login_form():
     st.title("Nurse Login")
     st.markdown("Please enter your credentials to access the triage review dashboard.")
     with st.form("nurse_login"):
-        username = st.text_input("Username", placeholder="e.g. haya")
+        username = st.text_input("Username", placeholder="e.g. nurse_name")
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
     if submitted:
