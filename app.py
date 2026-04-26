@@ -154,7 +154,7 @@ def prompt_chain_assess(symptoms, previous_qa=None):
     if previous_qa and len(previous_qa) > 0:
         chain_context = "\n\nPrevious information gathered through follow-up (prompt chain history):\n"
         chain_context += "\n".join(f"Q: {q}\nA: {a}" for q, a in previous_qa)
-        chain_context += f"\n\n(Total rounds completed: {len(previous_qa)})"
+         chain_context += f"\n\n(Total rounds completed: {len(previous_qa)})"
 
 
   prompt = f'''You are an experienced ER intake nurse. Your job is to decide if a patient gave enough info to triage.
