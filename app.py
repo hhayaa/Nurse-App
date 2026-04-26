@@ -18,7 +18,8 @@ def init_db():
         llm_recommendation TEXT, llm_next_steps TEXT, llm_sources TEXT,
         llm_evidence TEXT, llm_patient_explanation TEXT, llm_confidence TEXT,
         rag_mode TEXT,
-        router_complete BOOLEAN, router_questions TEXT, router_answers TEXT,
+        prompt_chain_complete BOOLEAN, prompt_chain_questions TEXT, prompt_chain_answers TEXT,
+        prompt_chain_rounds INTEGER,
         evaluator_enhanced BOOLEAN,
         nurse_tier TEXT, nurse_action TEXT, nurse_notes TEXT,
         nurse_override_reason TEXT, nurse_timestamp TEXT, nurse_name TEXT,
@@ -28,8 +29,10 @@ def init_db():
     cur = conn.execute("PRAGMA table_info(cases)")
     existing = {row[1] for row in cur.fetchall()}
     for col, typ in [('enriched_symptoms','TEXT'),('llm_reasoning_original','TEXT'),
-        ('router_complete','BOOLEAN'),('router_questions','TEXT'),('router_answers','TEXT'),
-        ('evaluator_enhanced','BOOLEAN'),('booking_agent_decision','TEXT')]:
+        ('prompt_chain_complete','BOOLEAN'),('prompt_chain_questions','TEXT'),
+        ('prompt_chain_answers','TEXT'),('prompt_chain_rounds','INTEGER'),
+        ('evaluator_enhanced','BOOLEAN'),('booking_agent_decision','TEXT'),
+        ('router_complete','BOOLEAN'),('router_questions','TEXT'),('router_answers','TEXT')]:
         if col not in existing:
             try: conn.execute(f'ALTER TABLE cases ADD COLUMN {col} {typ}')
             except: pass
@@ -90,7 +93,7 @@ def nurse_login_form():
     st.title("Nurse Login")
     st.markdown("Please enter your credentials to access the triage review dashboard.")
     with st.form("nurse_login"):
-        username = st.text_input("Username", placeholder="e.g. Nurse_name")
+        username = st.text_input("Username", placeholder="e.g. haya")
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
     if submitted:
@@ -116,26 +119,85 @@ def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
             thinking_config=types.ThinkingConfig(thinking_budget=0)))
     return resp.text or ''
 
-MAX_ROUNDS = 3
+# ============================================================================
+# AGENTIC AI 1: PROMPT CHAINING — multi-round adaptive symptom gathering
+#
+# How it works (chain pattern):
+#   Prompt 1: Patient symptoms → LLM decides if enough info → generates questions
+#   Prompt 2: Patient symptoms + Round 1 Q&A → LLM re-assesses → generates NEW questions
+#   Prompt 3: Patient symptoms + Round 1 + Round 2 Q&A → LLM re-assesses → ready or force
+#
+# Each prompt's OUTPUT (the Q&A) becomes the INPUT context for the NEXT prompt.
+# This is prompt chaining: sequential prompts where each builds on the previous.
+#
+# After the chain completes (ready=True or max rounds), the enriched symptoms
+# pass through the GATE to the RAG triage module.
+# ============================================================================
+MAX_CHAIN_ROUNDS = 3
 
-def router_assess(symptoms, previous_qa=None):
+def prompt_chain_assess(symptoms, previous_qa=None):
+    """
+    Prompt Chaining (Agentic AI 1): Each call builds on previous Q&A context.
+    
+    Round 1: LLM sees only raw symptoms → asks initial questions
+    Round 2: LLM sees symptoms + Round 1 answers → asks DIFFERENT questions
+    Round 3: LLM sees symptoms + all answers → marks ready or final questions
+    
+    This is NOT a router (which would dispatch to different paths).
+    This IS prompt chaining (output of prompt N feeds into prompt N+1).
+    """
     if not GEMINI_OK:
         return {"ready": True, "questions": []}
-    history = ""
-    if previous_qa:
-        history = "\n\nPrevious follow-up Q&A:\n" + "\n".join(f"Q: {q}\nA: {a}" for q, a in previous_qa)
-    prompt = f'''You are an experienced ER intake nurse. A patient said: "{symptoms}"{history}
 
-Decide if you have ENOUGH info to triage.
-READY = specific symptom(s) + duration OR severity + relevant context.
-NOT READY = ask 1-2 SHORT targeted questions about what is STILL MISSING.
-Questions must be DIFFERENT from ones already asked.
-If patient already answered {MAX_ROUNDS}+ rounds, mark ready.
+    # Build the chain context: each round adds to the history
+    chain_context = ""
+    if previous_qa and len(previous_qa) > 0:
+        chain_context = "\n\nPrevious information gathered through follow-up (prompt chain history):\n"
+        chain_context += "\n".join(f"Q: {q}\nA: {a}" for q, a in previous_qa)
+        chain_context += f"\n\n(Total rounds completed: {len(previous_qa)})"
+
+prompt = f'''You are an experienced ER intake nurse. Your job is to decide if a patient gave enough info to triage.
+
+Patient said: "{symptoms}"{chain_context}
+
+IMPORTANT: You are NOT filling out a form. Most patients give enough info. Only ask questions if the input is genuinely VAGUE or UNCLEAR.
+
+READY — pass directly to triage. Examples of READY inputs:
+- "I have a bad cough for 3 days" → READY (symptom + duration)
+- "My child has a fever and rash since yesterday" → READY
+- "Severe chest pain radiating to my left arm" → READY
+- "I fell and my ankle is swollen and I can't walk" → READY
+- "I've been having headaches every day for a week" → READY
+- "Burning when I urinate for 2 days" → READY
+
+NOT READY — only for truly vague inputs. Examples:
+- "I feel sick" → NOT READY (no specific symptom)
+- "I need help" → NOT READY
+- "I have pain" → NOT READY (where? how long?)
+- "I'm not feeling well" → NOT READY
+- "Something is wrong" → NOT READY
+
+DEFAULT TO READY. If in doubt, mark ready. The triage system can work with partial info.
+If NOT READY, ask only 1-2 SHORT questions about what is critically missing.
+Questions must be DIFFERENT from any already asked.
 
 Respond ONLY in JSON:
 {{"ready": true, "questions": []}}
 or
 {{"ready": false, "questions": ["question 1", "question 2"]}}'''
+
+RULES:
+- If NOT READY, generate 1-2 SHORT targeted follow-up questions
+- Each question must address something NOT already covered in the chain history above
+- Focus on what is STILL MISSING: symptom location, duration, severity (1-10), associated symptoms, relevant medical history
+- If {MAX_CHAIN_ROUNDS} or more rounds of questions have been answered, mark READY regardless — you have enough to work with
+- Do NOT repeat or rephrase questions that were already asked
+
+Respond ONLY in JSON:
+{{"ready": true, "questions": []}}
+or
+{{"ready": false, "questions": ["question 1", "question 2"]}}'''
+
     try:
         raw = gemini_call(prompt, max_tokens=300)
         clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
@@ -144,20 +206,50 @@ or
     except:
         return {"ready": True, "questions": []}
 
-def evaluator_enhance(reasoning, symptoms):
-    if not GEMINI_OK: return reasoning
-    prompt = f'''Senior emergency physician reviewing triage:
-Patient: "{symptoms}"
-Assessment:
-{reasoning}
-Enhance: check urgency, add missed red flags, complete next steps.
-Keep same [1],[2] citations. Do NOT invent sources. Do NOT change urgency unless clearly wrong.
-Output enhanced assessment in SAME format.'''
-    try:
-        e = gemini_call(prompt, max_tokens=1500)
-        return e if e and len(e) > 50 else reasoning
-    except: return reasoning
+# ============================================================================
+# AGENTIC AI 2: EVALUATOR-OPTIMIZER — senior physician review with feedback
+#
+# Takes the RAG triage output, reviews it, and enhances it.
+# If the evaluator changes the reasoning, the feedback loop is recorded
+# so the nurse can see before/after comparison.
+# ============================================================================
+def evaluator_optimize(reasoning, symptoms):
+    """
+    Evaluator-Optimizer (Agentic AI 2): Reviews and enhances RAG triage output.
+    Acts as a senior physician providing quality control.
+    The feedback (enhanced vs original) is stored for nurse comparison.
+    """
+    if not GEMINI_OK:
+        return reasoning
 
+    prompt = f'''You are a senior emergency physician reviewing a junior colleague's triage assessment.
+
+Patient symptoms: "{symptoms}"
+
+Junior colleague's triage assessment:
+{reasoning}
+
+Review and enhance by:
+1. Check if the urgency level is appropriate for these symptoms
+2. Add any critical red flags that were missed
+3. Ensure the next steps are clinically complete and actionable
+4. Keep the same citation references [1], [2] etc — do NOT invent new sources
+5. Do NOT change the urgency level unless it is clearly wrong
+
+Output the ENHANCED assessment in the SAME format.
+If the original is already good, return it with only minor improvements.'''
+
+    try:
+        enhanced = gemini_call(prompt, max_tokens=1500)
+        if enhanced and len(enhanced) > 50:
+            return enhanced
+        return reasoning
+    except:
+        return reasoning
+
+# ============================================================================
+# RAG KNOWLEDGE BASE
+# ============================================================================
 @st.cache_resource
 def load_knowledge_base():
     from rank_bm25 import BM25Okapi
@@ -190,6 +282,9 @@ def retrieve_evidence(query, k=5):
         retrieved.append({'rank':rank,'topic':topic,'section':section,'score':float(scores[idx]),'content':content[:500]})
     return retrieved, evidence_blocks, '\n'.join(source_lines)
 
+# ============================================================================
+# RAG-BASED LLM TRIAGE
+# ============================================================================
 TRIAGE_GROUNDED = """You are an Emergency Department triage assistant supporting an ER nurse.
 ## Rules
 - Use the retrieved medical evidence to support your assessment.
@@ -272,18 +367,58 @@ def parse_triage(text):
         if m: result[key] = m.group(1).strip()
     return result
 
+# ============================================================================
+# FULL PIPELINE: Prompt Chain → Gate → RAG Triage → Evaluator-Optimizer
+#
+# Matches architecture diagram:
+#   Patient → [Agentic AI 1: Prompt Chaining] → [Gate] →
+#   [RAG-based LLM Triage] → [Agentic AI 2: Evaluator-Optimizer] →
+#   [HIL: Nurse Confirmation] → [Hard Coded: Booking]
+# ============================================================================
 def run_full_pipeline(symptoms, previous_qa=None):
-    router = router_assess(symptoms, previous_qa)
-    if not router['ready'] and router['questions']:
-        return {'status':'need_more_info','questions':router['questions']}
-    tri = run_triage(symptoms)
-    original = tri.get('reasoning','')
-    enhanced = False
-    if GEMINI_OK:
-        new_r = evaluator_enhance(original, symptoms)
-        if new_r != original: tri['reasoning'] = new_r; enhanced = True
-    return {'status':'complete','triage':tri,'original_reasoning':original,'evaluator_enhanced':enhanced}
+    """
+    Complete agentic pipeline matching the architecture diagram.
+    
+    Step 1 — Prompt Chaining (Agentic AI 1):
+        Multi-round adaptive questioning. Each round's output chains into the next.
+    Step 2 — Gate:
+        If prompt chain says ready=True, patient info passes through to triage.
+        If ready=False, returns questions for another round.
+    Step 3 — RAG-based LLM Triage:
+        BM25 retrieval from medical KB + Gemini classification.
+    Step 4 — Evaluator-Optimizer (Agentic AI 2):
+        Senior physician review. Enhances reasoning, adds missed red flags.
+        Stores original vs enhanced for nurse comparison (feedback loop).
+    """
+    # Step 1 + 2: Prompt chaining + Gate
+    chain_result = prompt_chain_assess(symptoms, previous_qa)
+    if not chain_result['ready'] and chain_result['questions']:
+        # Gate: NOT enough info — return questions for next chain round
+        return {'status': 'need_more_info', 'questions': chain_result['questions']}
 
+    # Gate: PASSED — proceed to triage
+    # Step 3: RAG Triage
+    tri = run_triage(symptoms)
+    original_reasoning = tri.get('reasoning', '')
+
+    # Step 4: Evaluator-Optimizer
+    evaluator_ran = False
+    if GEMINI_OK:
+        enhanced_reasoning = evaluator_optimize(original_reasoning, symptoms)
+        if enhanced_reasoning != original_reasoning:
+            tri['reasoning'] = enhanced_reasoning
+            evaluator_ran = True
+
+    return {
+        'status': 'complete',
+        'triage': tri,
+        'original_reasoning': original_reasoning,
+        'evaluator_enhanced': evaluator_ran,
+    }
+
+# ============================================================================
+# HARD CODED BOOKING — reads real schedule, always future dates
+# ============================================================================
 @st.cache_resource
 def load_schedules():
     import pandas as pd
@@ -296,6 +431,7 @@ SCHEDULE_AVAILABLE = EMERGENCY_DF is not None
 if 'booked_slots' not in st.session_state: st.session_state.booked_slots = set()
 
 def future_date(slot_date, slot_day, slot_time):
+    """Shift old Excel dates to future dates. Always returns a date ahead of today."""
     today = datetime.now()
     try:
         orig = datetime.strptime(str(slot_date)[:10], '%Y-%m-%d')
@@ -314,6 +450,7 @@ def find_available_slot(schedule_df):
     return available.iloc[0] if not available.empty else None
 
 def book_action(case_id, tier, symptoms=''):
+    """Hard-coded booking logic — deterministic routing based on confirmed tier."""
     if tier == 'Urgent':
         if SCHEDULE_AVAILABLE:
             slot = find_available_slot(EMERGENCY_DF)
@@ -330,14 +467,16 @@ def book_action(case_id, tier, symptoms=''):
                 return {'status':'booked','type':'Scheduled Appointment','doctor':slot['Doctor'],'time':ft,'dept':slot['Department'],'room':slot['Room'],'booking_id':slot['Slot ID'],'agent_decision':'routine_appointment','instructions':f"Appointment with {slot['Doctor']} on {ft} in {slot['Room']}. Arrive 15 minutes early."}
         d = random.randint(2,10)
         return {'status':'booked','type':'Scheduled Appointment','doctor':'Dr. Hall','dept':'General','time':(datetime.now()+timedelta(days=d)).strftime('%B %d, %Y at %I:%M %p'),'room':f'G-{random.randint(101,104)}','booking_id':f'BK-{uuid.uuid4().hex[:6]}','agent_decision':'routine_fallback','instructions':'Arrive 15 minutes early.'}
-    return {'status':'self_care_issued','type':'Self-Care Guidance','doctor':None,'time':None,'dept':None,'room':None,'booking_id':f'SC-{uuid.uuid4().hex[:6]}','agent_decision':'self_care','instructions':'Manage at home. Return if worsening.','guidance':'- Rest and hydrate\n- Monitor symptoms\n- OTC medication as needed\n- Return if fever > 38.5C or worsening'}
+    else:  # Self-care
+        return {'status':'self_care_issued','type':'Self-Care Guidance','doctor':None,'time':None,'dept':None,'room':None,'booking_id':f'SC-{uuid.uuid4().hex[:6]}','agent_decision':'self_care','instructions':'Manage at home. Return if worsening.','guidance':'- Rest and hydrate\n- Monitor symptoms\n- OTC medication as needed\n- Return if fever > 38.5C or worsening'}
 
 # ============================================================================
-# APP
+# STREAMLIT APP
 # ============================================================================
 st.set_page_config(page_title="Triage Decision Support System", layout="wide")
 st.markdown("""<style>div[data-testid="stMetric"]{background:#f8f9fa;padding:12px;border-radius:8px;}</style>""", unsafe_allow_html=True)
 
+# Session state for prompt chaining flow
 if 'fu_stage' not in st.session_state: st.session_state.fu_stage = 'initial'
 if 'fu_qa' not in st.session_state: st.session_state.fu_qa = []
 if 'fu_round' not in st.session_state: st.session_state.fu_round = 0
@@ -345,6 +484,7 @@ if 'fu_ticket' not in st.session_state: st.session_state.fu_ticket = ''
 if 'fu_symptoms' not in st.session_state: st.session_state.fu_symptoms = ''
 if 'fu_questions' not in st.session_state: st.session_state.fu_questions = []
 
+# Sidebar
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Select Dashboard:", ["Patient Dashboard","Nurse Dashboard","Developer Dashboard"])
 stats = db_stats()
@@ -352,7 +492,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Cases:** {stats['total']} total | {stats['pending']} pending")
 st.sidebar.markdown(f"**RAG:** {'Connected (' + str(len(KB_CHUNKS)) + ' chunks)' if RAG_AVAILABLE else 'Demo mode'}")
 st.sidebar.markdown(f"**Scheduler:** {'Connected' if SCHEDULE_AVAILABLE else 'Demo mode'}")
-st.sidebar.markdown(f"**Agentic AI:** {'Enabled (Router + Evaluator)' if GEMINI_OK else 'Disabled'}")
+st.sidebar.markdown(f"**Agentic AI:** {'Enabled (Prompt Chain + Evaluator)' if GEMINI_OK else 'Disabled'}")
 if SCHEDULE_AVAILABLE: st.sidebar.markdown(f"**Booked this session:** {len(st.session_state.booked_slots)}")
 st.sidebar.markdown("---")
 with st.sidebar.expander("Admin"):
@@ -361,6 +501,7 @@ with st.sidebar.expander("Admin"):
         st.session_state.booked_slots = set(); st.session_state.fu_stage = 'initial'
         st.session_state.fu_qa = []; st.session_state.fu_round = 0; st.rerun()
 
+# ======================== PATIENT DASHBOARD ==================================
 if page == "Patient Dashboard":
     st.title("Patient Triage Dashboard")
     tab1, tab2 = st.tabs(["Submit New Case","Check Results"])
@@ -378,17 +519,19 @@ if page == "Patient Dashboard":
                     with st.spinner("AI is analyzing your symptoms..."):
                         result = run_full_pipeline(symptoms)
                     if result['status'] == 'need_more_info' and result['questions']:
+                        # Prompt chain round 1: need more info
                         st.session_state.fu_stage = 'followup'; st.session_state.fu_ticket = ticket
                         st.session_state.fu_symptoms = symptoms; st.session_state.fu_qa = []
                         st.session_state.fu_round = 1; st.session_state.fu_questions = result['questions']
                         st.rerun()
                     elif result['status'] == 'complete':
                         cid = f"CASE-{uuid.uuid4().hex[:8]}"; tri = result['triage']
-                        db_insert({'case_id':cid,'ticket_number':ticket,'patient_symptoms':symptoms,'enriched_symptoms':symptoms,'status':'pending','llm_urgency':tri.get('urgency',''),'llm_reasoning':tri.get('reasoning',''),'llm_reasoning_original':result.get('original_reasoning',''),'llm_recommendation':tri.get('recommendation',''),'llm_next_steps':tri.get('next_steps',''),'llm_sources':tri.get('sources',''),'llm_evidence':tri.get('evidence',''),'llm_patient_explanation':tri.get('patient_explanation',''),'llm_confidence':tri.get('confidence',''),'rag_mode':tri.get('rag_mode',''),'router_complete':True,'evaluator_enhanced':result.get('evaluator_enhanced',False),'created_at':datetime.utcnow().isoformat(),'updated_at':datetime.utcnow().isoformat()})
+                        db_insert({'case_id':cid,'ticket_number':ticket,'patient_symptoms':symptoms,'enriched_symptoms':symptoms,'status':'pending','llm_urgency':tri.get('urgency',''),'llm_reasoning':tri.get('reasoning',''),'llm_reasoning_original':result.get('original_reasoning',''),'llm_recommendation':tri.get('recommendation',''),'llm_next_steps':tri.get('next_steps',''),'llm_sources':tri.get('sources',''),'llm_evidence':tri.get('evidence',''),'llm_patient_explanation':tri.get('patient_explanation',''),'llm_confidence':tri.get('confidence',''),'rag_mode':tri.get('rag_mode',''),'prompt_chain_complete':True,'prompt_chain_rounds':0,'evaluator_enhanced':result.get('evaluator_enhanced',False),'created_at':datetime.utcnow().isoformat(),'updated_at':datetime.utcnow().isoformat()})
                         st.success("Submitted!"); st.info(f"**Case ID:** `{cid}` — A nurse will review shortly.")
+
         elif st.session_state.fu_stage == 'followup':
             round_num = st.session_state.fu_round
-            st.markdown(f"### We need a few more details (Round {round_num}/{MAX_ROUNDS})")
+            st.markdown(f"### We need a few more details (Round {round_num}/{MAX_CHAIN_ROUNDS})")
             st.markdown(f"**Your initial description:** _{st.session_state.fu_symptoms}_")
             if st.session_state.fu_qa:
                 with st.expander(f"Previous answers ({len(st.session_state.fu_qa)} answered)", expanded=False):
@@ -410,26 +553,32 @@ if page == "Patient Dashboard":
             if submit_btn:
                 if not all(a.strip() for a in answers): st.error("Please answer all questions.")
                 else:
+                    # Chain: accumulate all Q&A across rounds
                     new_pairs = list(zip(questions, answers))
                     all_qa = st.session_state.fu_qa + new_pairs
+                    # Build enriched symptoms (chain output)
                     qa_text = '\n'.join(f"Q: {q}\nA: {a}" for q, a in all_qa)
                     enriched = f"{st.session_state.fu_symptoms}\n\nAdditional details:\n{qa_text}"
                     with st.spinner("Re-analyzing with your additional details..."):
+                        # Next link in the chain: pass ALL previous Q&A
                         result = run_full_pipeline(enriched, previous_qa=all_qa)
-                    if result['status'] == 'need_more_info' and result['questions'] and round_num < MAX_ROUNDS:
+                    if result['status'] == 'need_more_info' and result['questions'] and round_num < MAX_CHAIN_ROUNDS:
+                        # Chain continues: another round with new questions
                         st.session_state.fu_qa = all_qa; st.session_state.fu_round = round_num + 1
                         st.session_state.fu_questions = result['questions']; st.rerun()
                     else:
+                        # Chain complete (ready or max rounds) — force triage if needed
                         if result['status'] != 'complete':
                             tri = run_triage(enriched); orig = tri.get('reasoning',''); ev = False
                             if GEMINI_OK:
-                                e = evaluator_enhance(orig, enriched)
+                                e = evaluator_optimize(orig, enriched)
                                 if e != orig: tri['reasoning'] = e; ev = True
                             result = {'status':'complete','triage':tri,'original_reasoning':orig,'evaluator_enhanced':ev}
                         cid = f"CASE-{uuid.uuid4().hex[:8]}"; tri = result['triage']
-                        db_insert({'case_id':cid,'ticket_number':st.session_state.fu_ticket,'patient_symptoms':st.session_state.fu_symptoms,'enriched_symptoms':enriched,'status':'pending','llm_urgency':tri.get('urgency',''),'llm_reasoning':tri.get('reasoning',''),'llm_reasoning_original':result.get('original_reasoning',''),'llm_recommendation':tri.get('recommendation',''),'llm_next_steps':tri.get('next_steps',''),'llm_sources':tri.get('sources',''),'llm_evidence':tri.get('evidence',''),'llm_patient_explanation':tri.get('patient_explanation',''),'llm_confidence':tri.get('confidence',''),'rag_mode':tri.get('rag_mode',''),'router_complete':True,'router_questions':json.dumps([q for q,_ in all_qa]),'router_answers':json.dumps([a for _,a in all_qa]),'evaluator_enhanced':result.get('evaluator_enhanced',False),'created_at':datetime.utcnow().isoformat(),'updated_at':datetime.utcnow().isoformat()})
+                        db_insert({'case_id':cid,'ticket_number':st.session_state.fu_ticket,'patient_symptoms':st.session_state.fu_symptoms,'enriched_symptoms':enriched,'status':'pending','llm_urgency':tri.get('urgency',''),'llm_reasoning':tri.get('reasoning',''),'llm_reasoning_original':result.get('original_reasoning',''),'llm_recommendation':tri.get('recommendation',''),'llm_next_steps':tri.get('next_steps',''),'llm_sources':tri.get('sources',''),'llm_evidence':tri.get('evidence',''),'llm_patient_explanation':tri.get('patient_explanation',''),'llm_confidence':tri.get('confidence',''),'rag_mode':tri.get('rag_mode',''),'prompt_chain_complete':True,'prompt_chain_questions':json.dumps([q for q,_ in all_qa]),'prompt_chain_answers':json.dumps([a for _,a in all_qa]),'prompt_chain_rounds':round_num,'evaluator_enhanced':result.get('evaluator_enhanced',False),'created_at':datetime.utcnow().isoformat(),'updated_at':datetime.utcnow().isoformat()})
                         st.success("Submitted!"); st.info(f"**Case ID:** `{cid}` — A nurse will review shortly.")
                         st.session_state.fu_stage = 'initial'; st.session_state.fu_qa = []; st.session_state.fu_round = 0
+
     with tab2:
         chk = st.text_input("Enter your ticket number:", key="chk", placeholder="e.g. 12")
         if chk:
@@ -457,6 +606,7 @@ if page == "Patient Dashboard":
                     if c.get('nurse_timestamp'): st.markdown(f"- **Reviewed:** {c['nurse_timestamp'][:19].replace('T',' ')} — {lbl}")
                 elif c['status'] == 'pending': st.warning(f"**{c['case_id']}** — Waiting for nurse review...")
 
+# ======================== NURSE DASHBOARD ====================================
 elif page == "Nurse Dashboard":
     nurse = check_nurse_login()
     if not nurse:
@@ -475,7 +625,7 @@ elif page == "Nurse Dashboard":
         tab_r, tab_h = st.tabs(["Review Cases","Review History"])
         with tab_r:
             if not pending:
-                st.info("No pending cases."); 
+                st.info("No pending cases.")
                 if st.button("Refresh", use_container_width=True): st.rerun()
             else:
                 opts = {f"{c['case_id']} — Ticket #{c['ticket_number']}":c['case_id'] for c in pending}
@@ -485,11 +635,15 @@ elif page == "Nurse Dashboard":
                     with cl:
                         st.subheader("Patient Symptoms")
                         st.text_area("",value=case['patient_symptoms'],height=100,disabled=True,label_visibility="collapsed")
-                        if case.get('router_questions'):
+                        # Show prompt chain Q&A
+                        pq = case.get('prompt_chain_questions') or case.get('router_questions')
+                        pa = case.get('prompt_chain_answers') or case.get('router_answers')
+                        if pq:
                             try:
-                                qs = json.loads(case['router_questions']); ans = json.loads(case.get('router_answers','[]'))
+                                qs = json.loads(pq); ans = json.loads(pa or '[]')
                                 if qs:
-                                    with st.expander(f"📋 Follow-up Q&A ({len(qs)} questions)", expanded=False):
+                                    rounds = case.get('prompt_chain_rounds', len(qs))
+                                    with st.expander(f"📋 Prompt Chain Q&A ({len(qs)} questions, {rounds} round(s))", expanded=False):
                                         for i,(q,a) in enumerate(zip(qs,ans)): st.markdown(f"**Q{i+1}:** {q}"); st.markdown(f"**A{i+1}:** {a}"); st.markdown("")
                             except: pass
                         st.subheader("AI Triage Assessment")
@@ -497,9 +651,11 @@ elif page == "Nurse Dashboard":
                         tc = {'Urgent':'red','Routine':'orange','Self-care':'green'}; cc = {'High':'green','Medium':'orange','Low':'red'}
                         m1,m2,m3 = st.columns(3)
                         m1.markdown(f"**Urgency:** :{tc.get(tier,'gray')}[{tier}]"); m2.markdown(f"**Confidence:** :{cc.get(conf,'gray')}[{conf}]"); m3.markdown(f"**Mode:** `{case.get('rag_mode','')}`")
-                        if case.get('router_complete'): st.success("✅ Router: Patient information complete")
+                        # Agentic pipeline status
+                        pc_complete = case.get('prompt_chain_complete') or case.get('router_complete')
+                        if pc_complete: st.success("✅ Prompt Chaining: Patient information gathered")
                         if case.get('evaluator_enhanced'):
-                            st.success("✅ Evaluator: Assessment enhanced by senior review")
+                            st.success("✅ Evaluator-Optimizer: Assessment enhanced by senior review")
                             if case.get('llm_reasoning_original'):
                                 with st.expander("🔍 View Evaluator Changes (Before/After)", expanded=False):
                                     col_b, col_a = st.columns(2)
@@ -546,12 +702,13 @@ elif page == "Nurse Dashboard":
                     lb = {'approve':'Approved','override_upgrade':'Upgraded','override_downgrade':'Downgraded'}.get(a,a)
                     with st.expander(f"{em} {c['case_id']} — AI: {c.get('llm_urgency','?')} → Final: {c.get('final_tier','?')} ({lb})"):
                         st.markdown(f"**Symptoms:** {(c.get('patient_symptoms',''))[:200]}...")
-                        if c.get('evaluator_enhanced'): st.markdown("**Evaluator:** Enhanced ✅")
+                        if c.get('evaluator_enhanced'): st.markdown("**Evaluator-Optimizer:** Enhanced ✅")
                         if c.get('booking_agent_decision'): st.markdown(f"**Booking:** {c['booking_agent_decision']}")
                         if c.get('nurse_override_reason'): st.markdown(f"**Override reason:** {c['nurse_override_reason']}")
                         if c.get('nurse_notes'): st.markdown(f"**Notes:** {c['nurse_notes']}")
                         st.caption(f"Nurse: {c.get('nurse_name','')} | {(c.get('nurse_timestamp','') or '')[:19]}")
 
+# ======================== DEVELOPER DASHBOARD ================================
 elif page == "Developer Dashboard":
     st.title("Developer Dashboard")
     st.caption("Audit trail — AI vs Nurse decision comparison, override analysis, JSON export")
