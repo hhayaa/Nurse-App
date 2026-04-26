@@ -186,18 +186,6 @@ Respond ONLY in JSON:
 or
 {{"ready": false, "questions": ["question 1", "question 2"]}}'''
 
-RULES:
-- If NOT READY, generate 1-2 SHORT targeted follow-up questions
-- Each question must address something NOT already covered in the chain history above
-- Focus on what is STILL MISSING: symptom location, duration, severity (1-10), associated symptoms, relevant medical history
-- If {MAX_CHAIN_ROUNDS} or more rounds of questions have been answered, mark READY regardless — you have enough to work with
-- Do NOT repeat or rephrase questions that were already asked
-
-Respond ONLY in JSON:
-{{"ready": true, "questions": []}}
-or
-{{"ready": false, "questions": ["question 1", "question 2"]}}'''
-
     try:
         raw = gemini_call(prompt, max_tokens=300)
         clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
