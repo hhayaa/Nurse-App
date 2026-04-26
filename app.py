@@ -156,26 +156,28 @@ def prompt_chain_assess(symptoms, previous_qa=None):
         chain_context += "\n".join(f"Q: {q}\nA: {a}" for q, a in previous_qa)
         chain_context += f"\n\n(Total rounds completed: {len(previous_qa)})"
 
-prompt = f'''You are an experienced ER intake nurse. Your job is to decide if a patient gave enough info to triage.
+         chain_context += f"\n\n(Total rounds completed: {len(previous_qa)})"
+
+  prompt = f'''You are an experienced ER intake nurse. Your job is to decide if a patient gave enough info to triage.
 
 Patient said: "{symptoms}"{chain_context}
 
 IMPORTANT: You are NOT filling out a form. Most patients give enough info. Only ask questions if the input is genuinely VAGUE or UNCLEAR.
 
-READY — pass directly to triage. Examples of READY inputs:
-- "I have a bad cough for 3 days" → READY (symptom + duration)
-- "My child has a fever and rash since yesterday" → READY
-- "Severe chest pain radiating to my left arm" → READY
-- "I fell and my ankle is swollen and I can't walk" → READY
-- "I've been having headaches every day for a week" → READY
-- "Burning when I urinate for 2 days" → READY
+READY -- pass directly to triage. Examples of READY inputs:
+- "I have a bad cough for 3 days" -- READY (symptom + duration)
+- "My child has a fever and rash since yesterday" -- READY
+- "Severe chest pain radiating to my left arm" -- READY
+- "I fell and my ankle is swollen and I can't walk" -- READY
+- "I've been having headaches every day for a week" -- READY
+- "Burning when I urinate for 2 days" -- READY
 
-NOT READY — only for truly vague inputs. Examples:
-- "I feel sick" → NOT READY (no specific symptom)
-- "I need help" → NOT READY
-- "I have pain" → NOT READY (where? how long?)
-- "I'm not feeling well" → NOT READY
-- "Something is wrong" → NOT READY
+NOT READY -- only for truly vague inputs. Examples:
+- "I feel sick" -- NOT READY (no specific symptom)
+- "I need help" -- NOT READY
+- "I have pain" -- NOT READY (where? how long?)
+- "I'm not feeling well" -- NOT READY
+- "Something is wrong" -- NOT READY
 
 DEFAULT TO READY. If in doubt, mark ready. The triage system can work with partial info.
 If NOT READY, ask only 1-2 SHORT questions about what is critically missing.
@@ -185,8 +187,10 @@ Respond ONLY in JSON:
 {{"ready": true, "questions": []}}
 or
 {{"ready": false, "questions": ["question 1", "question 2"]}}'''
+
     try:
         raw = gemini_call(prompt, max_tokens=300)
+
         clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
         r = json.loads(clean)
         return {"ready": r.get("ready", True), "questions": r.get("questions", [])}
