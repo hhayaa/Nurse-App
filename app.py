@@ -679,7 +679,7 @@ if page == "Patient Dashboard":
             with st.form("pf"):
                 ca, cb = st.columns([1,3])
                 with ca:
-                    ticket = st.text_input("Ticket Number", placeholder="e.g. 12")
+                    ticket = st.text_input("Ticket Number", placeholder="e.g. T0")
                 with cb: symptoms = st.text_area("Describe your symptoms", placeholder="Please describe what you are feeling, when it started, and how severe it is...", height=150)
                 submitted = st.form_submit_button("Submit", type="primary", use_container_width=True)
             if submitted:
