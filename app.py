@@ -236,15 +236,16 @@ or
     try:
         r = json.loads(clean)
     except Exception:
-        # Try extracting JSON from anywhere in the response
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             try:
                 r = json.loads(m.group())
             except Exception:
-                raise RuntimeError(f"Gemini follow-up returned invalid JSON.\nRAW ({len(raw)} chars): {raw[:500]}")
+                st.error(f"DEBUG: JSON parse failed. Raw ({len(raw)} chars): {raw[:300]}")
+                st.stop()
         else:
-            raise RuntimeError(f"Gemini follow-up returned no JSON at all.\nRAW ({len(raw)} chars): {raw[:500]}")
+            st.error(f"DEBUG: No JSON found. Raw ({len(raw)} chars): {raw[:300]}")
+            st.stop()
 
     return {
         "ready": r.get("ready", True),
