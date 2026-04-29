@@ -212,18 +212,21 @@ Respond ONLY in valid JSON:
 or
 {{"ready": false, "questions": ["question 1", "question 2"]}}'''
 
-    raw = gemini_call(prompt, max_tokens=300)
+raw = gemini_call(prompt, max_tokens=300)
     clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
 
     try:
         r = json.loads(clean)
-    except Exception as e:
-        raise RuntimeError(f"Gemini follow-up returned invalid JSON: {raw}") from e
-
-    return {
-        "ready": r.get("ready", True),
-        "questions": r.get("questions", [])
-    }
+    except Exception:
+        # Fallback: extract JSON object from anywhere in the response
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            try:
+                r = json.loads(m.group())
+            except Exception:
+                return {"ready": True, "questions": []}
+        else:
+            return {"ready": True, "questions": []}
 
 # ============================================================================
 # TOOL 2: SEARCH_KB -- BM25 retrieval from medical knowledge base
