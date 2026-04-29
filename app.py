@@ -1117,7 +1117,7 @@ elif page == "Nurse Dashboard":
             else:
                 filt = st.selectbox("Filter:",['All','Approved','Overridden'])
                 for c in reviewed:
-                    a = c.get('nurse_action','')
+                    a = c.get('nurse_action') or ''
                     if filt == 'Approved' and a != 'approve': continue
                     if filt == 'Overridden' and not a.startswith('override'): continue
                     em = {'approve':'✅','override_upgrade':'⬆️','override_downgrade':'⬇️'}.get(a,'❓')
@@ -1203,7 +1203,7 @@ elif page == "Developer Dashboard":
         else: display = all_cases
         for c in display:
             ai_t = c.get('llm_urgency','--'); nr_t = c.get('final_tier','--')
-            act = c.get('nurse_action','pending'); is_rev = c['status'] == 'reviewed'
+            act = c.get('nurse_action') or 'pending'; is_rev = c['status'] == 'reviewed'
             agree = ai_t == nr_t and is_rev
             emoji = '✅' if agree else ('⚠️' if act.startswith('override') else '⏳')
             with st.expander(f"{emoji} {c['case_id']} -- Ticket #{c.get('ticket_number','')} -- {c['status']}"):
