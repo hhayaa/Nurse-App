@@ -235,13 +235,22 @@ or
     clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
     try:
         r = json.loads(clean)
-    except Exception as e:
-        raise RuntimeError(f"Gemini follow-up returned invalid JSON: {raw}") from e
+    except Exception:
+        # Try extracting JSON from anywhere in the response
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            try:
+                r = json.loads(m.group())
+            except Exception:
+                raise RuntimeError(f"Gemini follow-up returned invalid JSON.\nRAW ({len(raw)} chars): {raw[:500]}")
+        else:
+            raise RuntimeError(f"Gemini follow-up returned no JSON at all.\nRAW ({len(raw)} chars): {raw[:500]}")
 
     return {
         "ready": r.get("ready", True),
         "questions": r.get("questions", [])
     }
+
 
 
 # ============================================================================
