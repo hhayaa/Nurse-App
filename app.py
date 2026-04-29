@@ -47,6 +47,13 @@ def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
     
     # Fallback to resp.text if parts extraction fails
     return (resp.text or '').strip()
+
+GEMINI_OK = False
+try:
+    from google import genai
+    GEMINI_OK = True
+except Exception:
+    GEMINI_OK = False
     
 # ============================================================================
 # REAL CREWAI IMPORT -- 2 separate agents are defined formally with CrewAI
@@ -228,6 +235,12 @@ or
         r = json.loads(clean)
     except Exception as e:
         raise RuntimeError(f"Gemini follow-up returned invalid JSON: {raw}") from e
+
+    return {
+        "ready": r.get("ready", True),
+        "questions": r.get("questions", [])
+    }
+
 
 # ============================================================================
 # TOOL 2: SEARCH_KB -- BM25 retrieval from medical knowledge base
