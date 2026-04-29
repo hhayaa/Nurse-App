@@ -383,8 +383,14 @@ Respond ONLY in JSON:
         raw = gemini_call(prompt, max_tokens=300)
         clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
         return json.loads(clean)
-    except Exception as e:
-        raise RuntimeError(f"Gemini confidence calibration failed: {e}")
+    except Exception:
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group())
+            except Exception:
+                pass
+        return {"confidence_pct": 50, "would_change_if": "N/A", "nurse_watch_for": "N/A"}
 
 # ============================================================================
 # TWO REAL CREWAI AGENTS + CUSTOM EXECUTION LOGIC
@@ -686,7 +692,14 @@ Respond ONLY in JSON.'''
             clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
             reflection = json.loads(clean)
         except Exception:
-            reflection = {"confident": True, "enhanced_reasoning": original_reasoning}
+            m = re.search(r'\{.*\}', raw, re.DOTALL)
+            if m:
+                try:
+                    reflection = json.loads(m.group())
+                except Exception:
+                    reflection = {"confident": True, "enhanced_reasoning": original_reasoning}
+            else:
+                reflection = {"confident": True, "enhanced_reasoning": original_reasoning}
 
         if reflection.get("confident"):
             if reflection.get("enhanced_reasoning") and len(reflection["enhanced_reasoning"]) > 50:
