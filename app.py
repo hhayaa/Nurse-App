@@ -3,6 +3,13 @@ import sqlite3, json, uuid, random, re, os
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# Load Streamlit Cloud secrets into environment
+import os
+if not os.environ.get('GOOGLE_API_KEY'):
+    try:
+        os.environ['GOOGLE_API_KEY'] = st.secrets['GOOGLE_API_KEY']
+    except Exception:
+        pass
 # ============================================================================
 # REAL CREWAI IMPORT -- 2 separate agents are defined formally with CrewAI
 # ============================================================================
