@@ -3,13 +3,32 @@ import sqlite3, json, uuid, random, re, os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Load Streamlit Cloud secrets into environment
-import os
-if not os.environ.get('GOOGLE_API_KEY'):
-    try:
-        os.environ['GOOGLE_API_KEY'] = st.secrets['GOOGLE_API_KEY']
-    except Exception:
-        pass
+def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
+    from google import genai
+    from google.genai import types
+    
+    # Get API key from Streamlit secrets or environment
+    import os
+    api_key = os.environ.get('GOOGLE_API_KEY') or os.environ.get('GEMINI_API_KEY')
+    if not api_key:
+        try:
+            api_key = st.secrets['GOOGLE_API_KEY']
+        except Exception:
+            pass
+    
+    client = genai.Client(api_key=api_key)
+    resp = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system if system else None,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            thinking_config=types.ThinkingConfig(thinking_budget=0)
+        )
+    )
+    return resp.text or ''
+    
 # ============================================================================
 # REAL CREWAI IMPORT -- 2 separate agents are defined formally with CrewAI
 # ============================================================================
