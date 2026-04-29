@@ -34,6 +34,13 @@ def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
     )
     return resp.text or ''
     
+    GEMINI_OK = False
+try:
+    from google import genai
+    GEMINI_OK = True
+except Exception:
+    pass
+    
 # ============================================================================
 # REAL CREWAI IMPORT -- 2 separate agents are defined formally with CrewAI
 # ============================================================================
