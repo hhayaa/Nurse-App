@@ -396,8 +396,8 @@ Answer THREE questions honestly:
 Respond ONLY in JSON:
 {{"confidence_pct": 85, "would_change_if": "patient reports chest tightness", "nurse_watch_for": "check vitals and symptom severity"}}'''
     try:
-     raw = gemini_call(prompt, max_tokens=300, json_mode=True)
-     clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
+    raw = gemini_call(prompt, max_tokens=300, json_mode=True)
+    clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
         return json.loads(clean)
     except Exception:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
