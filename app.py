@@ -12,7 +12,6 @@ def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
     from google import genai
     from google.genai import types
     
-    # Get API key from Streamlit secrets or environment
     import os
     api_key = os.environ.get('GOOGLE_API_KEY') or os.environ.get('GEMINI_API_KEY')
     if not api_key:
@@ -29,11 +28,9 @@ def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
             system_instruction=system if system else None,
             temperature=temperature,
             max_output_tokens=max_tokens,
-            thinking_config=types.ThinkingConfig(thinking_budget=0)
         )
     )
-    return resp.text or ''
-    
+    return resp.text or ''    
     GEMINI_OK = False
 try:
     from google import genai
