@@ -8,7 +8,7 @@ import sqlite3, json, uuid, random, re, os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
+def gemini_call(prompt, system="", temperature=0.0, max_tokens=900, json_mode=False):
     from google import genai
     from google.genai import types
     
@@ -21,23 +21,26 @@ def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
             pass
     
     client = genai.Client(api_key=api_key)
+    
+    config_params = {
+        'system_instruction': system if system else None,
+        'temperature': temperature,
+        'max_output_tokens': max_tokens,
+    }
+    if json_mode:
+        config_params['response_mime_type'] = 'application/json'
+    
     resp = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system if system else None,
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-        )
+        config=types.GenerateContentConfig(**config_params)
     )
     
-    # Extract ONLY non-thinking parts from the response
-    # resp.text may include thinking content that corrupts JSON
     try:
         text_parts = []
         for part in resp.candidates[0].content.parts:
             if getattr(part, 'thought', False):
-                continue  # skip thinking parts
+                continue
             if hasattr(part, 'text') and part.text:
                 text_parts.append(part.text)
         if text_parts:
@@ -45,7 +48,6 @@ def gemini_call(prompt, system="", temperature=0.0, max_tokens=900):
     except Exception:
         pass
     
-    # Fallback to resp.text if parts extraction fails
     return (resp.text or '').strip()
 
 GEMINI_OK = False
@@ -229,7 +231,7 @@ Respond ONLY in valid JSON:
 or
 {{"ready": false, "questions": ["question 1", "question 2"]}}'''
 
-    raw = gemini_call(prompt, max_tokens=300)
+    raw = gemini_call(prompt, max_tokens=300, json_mode=True)
     clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
     try:
         r = json.loads(clean)
@@ -394,8 +396,8 @@ Answer THREE questions honestly:
 Respond ONLY in JSON:
 {{"confidence_pct": 85, "would_change_if": "patient reports chest tightness", "nurse_watch_for": "check vitals and symptom severity"}}'''
     try:
-        raw = gemini_call(prompt, max_tokens=300)
-        clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
+     raw = gemini_call(prompt, max_tokens=300, json_mode=True)
+     clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
         return json.loads(clean)
     except Exception:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -702,7 +704,7 @@ If not confident:
 
 Respond ONLY in JSON.'''
         try:
-            raw = gemini_call(reflect_prompt, max_tokens=500)
+            raw = gemini_call(reflect_prompt, max_tokens=500, json_mode=True)
             clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
             reflection = json.loads(clean)
         except Exception:
@@ -840,7 +842,7 @@ Analyze:
 Respond ONLY in JSON:
 {{"agreement_rate": "X%", "bias_pattern": "description", "failure_modes": ["mode1","mode2"], "improvement": "suggestion", "novel_finding": "finding or null"}}'''
     try:
-        raw = gemini_call(prompt, max_tokens=600)
+        raw = gemini_call(prompt, max_tokens=600, json_mode=True)
         clean = re.sub(r'```json\s*|```\s*', '', raw).strip()
         return json.loads(clean)
     except Exception:
